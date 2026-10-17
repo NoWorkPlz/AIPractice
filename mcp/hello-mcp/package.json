@@ -1,0 +1,19 @@
+{
+  "name": "hello-mcp",
+  "version": "1.0.0",
+  "description": "MCP 학습용 최소 예제 서버",
+  "type": "module",
+  "main": "server.js",
+  "bin": {
+    "hello-mcp": "server.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test-client.js",
+    "inspect": "npx @modelcontextprotocol/inspector node server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "zod": "^3.25.0"
+  }
+}
