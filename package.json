@@ -1,17 +1,20 @@
 {
   "name": "work-rhythm",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "description": "업무 리듬: 반복 업무 정리 앱 (웹 · PWA · 안드로이드)",
   "scripts": {
     "build": "node scripts/build-web.mjs",
-    "android": "npm run build && npx cap sync android"
+    "android": "npm run build && npx cap sync android",
+    "vendor": "esbuild scripts/sdk-entry.mjs --bundle --format=esm --platform=browser --minify --legal-comments=none --outfile=vendor/anthropic-sdk.mjs"
   },
   "dependencies": {
     "@capacitor/android": "7.6.9",
     "@capacitor/core": "7.6.9"
   },
   "devDependencies": {
-    "@capacitor/cli": "7.6.9"
+    "@capacitor/cli": "7.6.9",
+    "@anthropic-ai/sdk": "0.137.0",
+    "esbuild": "0.28.2"
   }
 }

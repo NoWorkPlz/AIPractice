@@ -206,6 +206,11 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
 .steps { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
 .steps b:first-child { margin-right: 6px; }
 @media (max-width: 640px) { .cell .hol-name { font-size: 10px; } }
+.ai-status { margin: 0 0 4px; font-weight: 500; }
+.progress .indet { width: 35%; animation: indet 1.4s ease-in-out infinite; }
+@keyframes indet { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+#ai-panel .task > input[type="checkbox"] { flex: none; width: 18px; height: 18px; margin: 3px 0 0; accent-color: var(--accent); }
+#ai-panel label.t-body { cursor: pointer; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; margin-top: 10px; }
 
 /* 업무 관리 */
@@ -657,7 +662,7 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
     var counts = { all: state.tasks.length };
     state.tasks.forEach(function (t) { counts[t.cadence] = (counts[t.cadence] || 0) + 1; });
     var list = state.tasks.filter(function (t) { return filter === "all" || t.cadence === filter; }).sort(byOrder);
-    var html = sampleBanner() + '<div class="mgr"><div class="stack"><section class="panel"><div class="sec-head"><h2>반복 업무 목록</h2><small>' + state.tasks.length + "개</small></div>";
+    var html = sampleBanner() + '<div class="mgr"><div class="stack">' + aiPanel() + '<section class="panel"><div class="sec-head"><h2>반복 업무 목록</h2><small>' + state.tasks.length + "개</small></div>";
     html += '<div class="seg filters" role="radiogroup" aria-label="주기 필터">' + ["all"].concat(Object.keys(CAD)).map(function (c) {
       return '<label><input type="radio" name="flt" value="' + c + '"' + (filter === c ? " checked" : "") + '><span>' + (c === "all" ? "전체" : CAD[c]) + " " + (counts[c] || 0) + "</span></label>";
     }).join("") + "</div>";
@@ -748,6 +753,235 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
     }
     return out;
   }
+
+  /* ---------- 매뉴얼에서 업무 가져오기 (Claude API) ---------- */
+  var KEY_STORE = "work-rhythm-api-key"; // 백업(state)과 따로 보관
+  var AI_MODEL = "claude-opus-5-5";
+  var MAX_REQUEST = 30 * 1024 * 1024; // API 요청 한도(32MB)보다 조금 작게
+  var MAX_FILE = 60 * 1024 * 1024;
+  var ai = { busy: false, status: "", error: "", result: null, summary: "", usage: null, skipped: 0, stream: null };
+  function getKey() { try { return localStorage.getItem(KEY_STORE) || ""; } catch (e) { return ""; } }
+  function setKey(v) { try { if (v) localStorage.setItem(KEY_STORE, v); else localStorage.removeItem(KEY_STORE); } catch (e) {} }
+
+  var AI_SCHEMA = {
+    type: "object", additionalProperties: false, required: ["summary", "tasks"],
+    properties: {
+      summary: { type: "string" },
+      tasks: {
+        type: "array",
+        items: {
+          type: "object", additionalProperties: false,
+          required: ["title", "cadence", "weekdays", "biweekly_weekday", "month_rule", "month_day", "quarter_month", "date", "holiday_rule", "shift_if_off", "category", "priority", "note", "source"],
+          properties: {
+            title: { type: "string" },
+            cadence: { type: "string", enum: ["daily", "weekly", "biweekly", "monthly", "quarterly", "once"] },
+            weekdays: { type: "array", items: { type: "integer" } },
+            biweekly_weekday: { type: "integer" },
+            month_rule: { type: "string", enum: ["day", "last", "firstBiz", "lastBiz"] },
+            month_day: { type: "integer" },
+            quarter_month: { type: "integer" },
+            date: { type: "string" },
+            holiday_rule: { type: "string", enum: ["skip", "before", "keep"] },
+            shift_if_off: { type: "boolean" },
+            category: { type: "string" },
+            priority: { type: "string", enum: ["high", "mid", "low"] },
+            note: { type: "string" },
+            source: { type: "string" }
+          }
+        }
+      }
+    }
+  };
+  function aiSystemPrompt() {
+    var t0 = today();
+    return [
+      "당신은 한국 회사의 업무 매뉴얼에서 담당자가 해야 할 일을 찾아, 반복 업무 관리 앱에 넣을 수 있게 정리합니다.",
+      "첨부는 PDF, 페이지 사진, 또는 한글·워드·엑셀·파워포인트에서 뽑은 텍스트입니다. 엑셀 표는 탭으로 칸이 나뉘어 있습니다.",
+      "오늘은 " + keyOf(t0) + " (" + DOW[t0.getDay()] + "요일)입니다.",
+      "",
+      "뽑을 것: 사람이 실제로 해야 하는 업무(보고, 제출, 정산, 점검, 회의, 백업, 갱신, 신고 등). 배경 설명, 원칙, 조직도, 연락처는 업무가 아닙니다.",
+      "",
+      "주기 정하기:",
+      "- 매일 → daily. weekdays에 요일 숫자(0=일, 1=월 … 6=토). 요일이 없으면 평일 [1,2,3,4,5].",
+      "- 매주 → weekly. weekdays에 요일. 요일이 없으면 [1].",
+      "- 격주 → biweekly. biweekly_weekday에 요일 하나.",
+      "- 매월 → monthly. 분기마다 → quarterly, quarter_month는 0=분기 첫째 달, 1=둘째 달, 2=마지막 달.",
+      "  월간·분기 날짜: 특정 일자는 month_rule=day와 month_day(1~31), 말일=last, 첫 영업일=firstBiz, 마지막 영업일=lastBiz. '월초'는 firstBiz, '월말'은 lastBiz.",
+      "- 특정 날짜 한 번 → once, date는 YYYY-MM-DD. 연도가 없으면 오늘 이후 가장 가까운 날짜.",
+      "- 매년 반복(예: 매년 3월 31일)은 다음에 돌아오는 날짜로 once를 만들고 note 앞에 '매년 반복'이라고 적습니다.",
+      "- 주기를 알 수 없는 업무는 넣지 않습니다.",
+      "",
+      "해당 없는 필드: weekdays는 [], biweekly_weekday·month_day·quarter_month는 0, date는 \"\", month_rule은 day.",
+      "holiday_rule: 일간은 skip, 주간·격주는 before가 기본이고, 매뉴얼에 공휴일 처리 방법이 있으면 따릅니다.",
+      "shift_if_off: 마감·제출 성격의 월간·분기 업무는 true, 아니면 false.",
+      "title: 20자 안팎의 업무명(예: '월간 실적 보고서 제출'). category: 보고·회의·정산·점검·계획·기록·관리처럼 짧게.",
+      "priority: 마감이 있거나 법정 의무·상급자 보고는 high, 일상 업무는 mid, 참고 수준은 low.",
+      "note: 제출처, 마감 시각, 준비물 같은 실무 정보를 짧게. 없으면 \"\".",
+      "source: 근거 쪽수와 원문 일부(예: '3쪽: 매월 25일까지 경비 정산 완료').",
+      "같은 업무가 여러 번 나오면 하나로 합칩니다. 업무가 없으면 tasks는 빈 배열입니다.",
+      "summary: 어떤 매뉴얼인지 한 문장."
+    ].join("\n");
+  }
+  function clampInt(v, lo, hi, dflt) { v = Math.round(Number(v)); return isFinite(v) && v >= lo && v <= hi ? v : dflt; }
+  function nextWeekday(dow) { var d = today(); while (d.getDay() !== dow) d = addDays(d, 1); return d; }
+  // 모델 출력 한 건을 앱의 업무 형식으로 바꾼다. 정보가 모자라면 null
+  function aiToTask(x) {
+    if (!x || !CAD[x.cadence] || !String(x.title || "").trim()) return null;
+    var wd = (Array.isArray(x.weekdays) ? x.weekdays : []).map(Number).filter(function (d, i, a) { return d >= 0 && d <= 6 && a.indexOf(d) === i; });
+    var o = {
+      title: String(x.title).trim().slice(0, 80), cadence: x.cadence, weekdays: [],
+      monthRule: ["day", "last", "firstBiz", "lastBiz"].indexOf(x.month_rule) !== -1 ? x.month_rule : "day",
+      monthDay: clampInt(x.month_day, 1, 31, 1), quarterMonth: clampInt(x.quarter_month, 0, 2, 0),
+      shiftWeekend: !!x.shift_if_off, holidayRule: "", category: String(x.category || "").trim().slice(0, 20),
+      priority: PRI[x.priority] !== undefined ? x.priority : "mid",
+      note: [String(x.note || "").trim(), x.source ? "출처 " + String(x.source).trim() : ""].filter(Boolean).join(" · ").slice(0, 200),
+      source: "manual"
+    };
+    if (x.cadence === "daily" || x.cadence === "weekly") {
+      o.weekdays = wd.length ? wd : x.cadence === "daily" ? [1, 2, 3, 4, 5] : [1];
+    }
+    if (x.cadence === "biweekly") o.anchor = keyOf(nextWeekday(clampInt(x.biweekly_weekday, 0, 6, 1)));
+    if (x.cadence === "daily" || x.cadence === "weekly" || x.cadence === "biweekly") {
+      o.holidayRule = ["skip", "before", "keep"].indexOf(x.holiday_rule) !== -1 ? x.holiday_rule : "";
+    }
+    if (x.cadence === "once") {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(x.date || "") || isNaN(parse(x.date))) return null;
+      o.date = x.date;
+    }
+    var t = baseTask(o);
+    if (t.cadence === "biweekly" && t.anchor < t.start) t.start = t.anchor;
+    return t;
+  }
+  function normTitle(s) { return String(s).replace(/\s+/g, "").toLowerCase(); }
+  function isDup(t) { return state.tasks.some(function (x) { return normTitle(x.title) === normTitle(t.title); }); }
+
+  function aiPanel() {
+    var key = getKey();
+    var h = '<section class="panel" id="ai-panel"><div class="sec-head"><h2>매뉴얼로 업무 가져오기</h2><small>AI 자동 정리</small></div>' +
+      '<p class="hint" style="margin:0 0 12px">업무 매뉴얼 파일(PDF·사진·한글·워드·엑셀·파워포인트)을 올리면 반복 업무와 마감일을 찾아 후보로 보여줘요. 확인하고 고른 것만 추가돼요.</p>';
+    if (!key) {
+      h += '<form id="key-form" class="field"><label for="ai-key">Anthropic API 키</label>' +
+        '<div class="row"><input type="password" id="ai-key" placeholder="sk-ant-..." autocomplete="off" spellcheck="false" style="flex:1 1 200px;width:auto"><button class="btn" type="submit">저장</button></div>' +
+        '<span class="hint">console.anthropic.com → API Keys에서 발급해요. 키는 이 기기에만 저장되고 백업 내용에는 들어가지 않아요.</span></form>';
+    } else if (ai.busy) {
+      h += '<p class="ai-status" id="ai-status" role="status">' + esc(ai.status) + '</p><div class="progress"><i class="indet"></i></div>' +
+        '<button class="ghost sm" type="button" data-act="ai-cancel">취소</button>';
+    } else if (ai.result) {
+      var n = ai.result.length;
+      h += (ai.summary ? '<p style="margin:0 0 8px"><b>문서</b> ' + esc(ai.summary) + "</p>" : "") +
+        '<p class="hint" style="margin:0 0 6px">업무 ' + n + "개를 찾았어요." + (ai.skipped ? " 주기나 날짜를 알 수 없는 " + ai.skipped + "개는 뺐어요." : "") + " 이미 있는 이름과 같은 업무는 체크를 꺼 두었어요.</p>";
+      if (n) {
+        h += '<ul class="tasks">' + ai.result.map(function (r, i) {
+          var t = r.task;
+          return '<li class="task"><input type="checkbox" class="ai-pick" id="ai-pick-' + i + '" data-i="' + i + '"' + (r.on ? " checked" : "") + '>' +
+            '<label class="t-body" for="ai-pick-' + i + '"><span class="t-title">' + esc(t.title) + "</span>" +
+            '<span class="t-meta"><span class="cad cad-' + t.cadence + '">' + CAD[t.cadence] + "</span><span>" + esc(describe(t)) + "</span>" +
+            (t.priority === "high" ? '<span class="pri">중요</span>' : "") + (t.category ? "<span>" + esc(t.category) + "</span>" : "") +
+            (r.dup ? '<span class="pri">같은 이름의 업무가 이미 있어요</span>' : "") + "</span>" +
+            (t.note ? '<span class="t-note">' + esc(t.note) + "</span>" : "") + "</label></li>";
+        }).join("") + "</ul>";
+      }
+      h += '<div class="row" style="margin-top:12px">' + (n ? '<button class="btn" type="button" data-act="ai-add">선택한 업무 추가</button>' : "") +
+        '<button class="ghost" type="button" data-act="ai-discard">' + (n ? "버리기" : "닫기") + "</button></div>";
+      if (ai.usage) h += '<p class="hint" style="margin:10px 0 0">사용량: 입력 ' + ai.usage.input.toLocaleString() + "토큰 · 출력 " + ai.usage.output.toLocaleString() + "토큰 (약 " + ai.usage.won.toLocaleString() + "원)</p>";
+    } else {
+      h += '<div class="field"><label for="ai-file">매뉴얼 파일</label><input type="file" id="ai-file" accept=".pdf,.hwp,.hwpx,.docx,.xlsx,.pptx,.doc,.xls,.ppt,.txt,.md,.csv,.tsv,.json,image/*,application/pdf" multiple>' +
+        '<span class="hint">PDF(스캔본 가능), 사진, 한글(HWP·HWPX), 워드(DOCX), 엑셀(XLSX), 파워포인트(PPTX), 텍스트 파일. 여러 개를 함께 올릴 수 있고, 분량에 따라 1~3분 걸려요.</span></div>' +
+        '<div class="row" style="margin-top:12px"><button class="btn" type="button" data-act="ai-run">업무 찾기</button>' +
+        '<span class="hint">API 키 …' + esc(key.slice(-4)) + '</span><button class="ghost sm" type="button" data-act="key-clear">키 지우기</button></div>';
+    }
+    h += '<p class="msg" id="ai-msg">' + esc(ai.error) + "</p>" +
+      '<p class="hint" style="margin:4px 0 0">올린 매뉴얼은 분석을 위해 Anthropic(Claude)으로 전송되고 API 사용료가 나와요. 회사 보안 규정을 먼저 확인하세요.</p></section>';
+    return h;
+  }
+  function aiSetStatus(text) {
+    ai.status = text;
+    var el = document.getElementById("ai-status");
+    if (el) el.textContent = text;
+  }
+  function aiFail(msg) { ai.busy = false; ai.stream = null; ai.error = msg; render(); }
+
+  async function aiRun() {
+    var input = document.getElementById("ai-file");
+    var files = input ? Array.prototype.slice.call(input.files) : [];
+    ai.error = "";
+    if (!files.length) { document.getElementById("ai-msg").textContent = "매뉴얼 파일을 먼저 고르세요."; return; }
+    var big = files.filter(function (f) { return f.size > MAX_FILE; })[0];
+    if (big) { document.getElementById("ai-msg").textContent = big.name + ": 파일이 너무 커요(60MB까지). 나눠서 올려 주세요."; return; }
+
+    ai.busy = true; ai.result = null; ai.usage = null;
+    ai.status = "파일을 준비하는 중…";
+    render();
+    var Anthropic;
+    try {
+      var reader = await import("./docread.mjs");
+      var content = [];
+      for (var i = 0; i < files.length; i++) {
+        if (!ai.busy) return;
+        aiSetStatus("파일을 읽는 중… " + files[i].name + " (" + (i + 1) + "/" + files.length + ")");
+        var r = await reader.readUpload(files[i]);
+        content = content.concat(r.blocks);
+      }
+      var images = content.filter(function (b) { return b.type === "image"; }).length;
+      if (images > 100) throw { userMessage: "그림이 너무 많아요(" + images + "장). 100장 이하로 나눠서 올려 주세요." };
+      if (JSON.stringify(content).length > MAX_REQUEST) throw { userMessage: "올린 파일을 합친 크기가 너무 커요. 나눠서 올려 주세요." };
+      content.push({ type: "text", text: "첨부한 업무 매뉴얼에서 할 일을 찾아 정리해 주세요." });
+      Anthropic = (await import("./vendor/anthropic-sdk.mjs")).default;
+      if (!ai.busy) return;
+      var client = new Anthropic({ apiKey: getKey(), dangerouslyAllowBrowser: true });
+      aiSetStatus("매뉴얼을 읽는 중… (" + files.length + "개 파일)");
+      var stream = client.beta.messages.stream({
+        model: AI_MODEL,
+        max_tokens: 64000,
+        betas: ["server-side-fallback-2026-07-01"],
+        fallbacks: "default",
+        output_config: { effort: "medium", format: { type: "json_schema", schema: AI_SCHEMA } },
+        system: aiSystemPrompt(),
+        messages: [{ role: "user", content: content }]
+      });
+      ai.stream = stream;
+      var acc = "";
+      stream.on("text", function (delta) {
+        acc += delta;
+        var found = (acc.match(/"title"\s*:/g) || []).length;
+        aiSetStatus(found ? "업무를 정리하는 중… " + found + "개 찾음" : "업무를 정리하는 중…");
+      });
+      var msg = await stream.finalMessage();
+      ai.stream = null;
+      if (msg.stop_reason === "refusal") return aiFail("이 문서는 분석할 수 없다는 응답을 받았어요. 다른 파일로 다시 시도해 주세요.");
+      if (msg.stop_reason === "max_tokens") return aiFail("매뉴얼이 너무 길어 결과가 잘렸어요. PDF를 나눠서 올려 주세요.");
+      var text = msg.content.filter(function (b) { return b.type === "text"; }).map(function (b) { return b.text; }).join("");
+      var out = JSON.parse(text);
+      var tasks = (out.tasks || []).map(aiToTask);
+      var ok = tasks.filter(Boolean);
+      ai.skipped = tasks.length - ok.length;
+      ai.summary = String(out.summary || "");
+      ai.result = ok.map(function (t) { var d = isDup(t); return { task: t, dup: d, on: !d }; });
+      var u = msg.usage || {};
+      var inTok = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+      var usd = inTok * 4 / 1e6 + (u.output_tokens || 0) * 20 / 1e6;
+      ai.usage = { input: inTok, output: u.output_tokens || 0, won: Math.max(1, Math.round(usd * 1400)) };
+      ai.busy = false;
+      render();
+    } catch (err) {
+      if (!ai.busy) return; // 취소함
+      aiFail(err && err.userMessage ? err.userMessage : aiErrorText(err, Anthropic));
+    }
+  }
+  function aiErrorText(err, Anthropic) {
+    if (Anthropic && err instanceof Anthropic.APIUserAbortError) return "";
+    if (Anthropic && err instanceof Anthropic.AuthenticationError) return "API 키가 맞지 않아요. 키를 지우고 다시 넣어 주세요.";
+    if (Anthropic && err instanceof Anthropic.PermissionDeniedError) return "이 API 키로는 사용할 수 없어요. Anthropic 콘솔에서 권한과 결제 상태를 확인하세요.";
+    if (Anthropic && err instanceof Anthropic.RateLimitError) return "요청이 너무 많아요. 잠시 뒤 다시 시도해 주세요.";
+    if (Anthropic && err instanceof Anthropic.BadRequestError) return "요청을 처리하지 못했어요: " + (err.error && err.error.error && err.error.error.message || err.message);
+    if (Anthropic && err instanceof Anthropic.InternalServerError) return "Claude 서버에 일시적인 문제가 있어요. 잠시 뒤 다시 시도해 주세요.";
+    if (Anthropic && err instanceof Anthropic.APIConnectionError) return "Claude에 연결하지 못했어요. 인터넷 연결을 확인하세요.";
+    if (Anthropic && err instanceof Anthropic.APIError) return "오류가 났어요(" + err.status + "): " + err.message;
+    if (!Anthropic) return "AI 기능을 불러오지 못했어요. 미리보기 화면에서는 동작하지 않으니, 설치한 앱이나 웹 주소(GitHub Pages)에서 써 주세요.";
+    if (err instanceof SyntaxError) return "결과를 읽지 못했어요. 다시 시도해 주세요.";
+    return "오류가 났어요: " + (err && err.message || err);
+  }
+
   function uniqueCats() {
     var seen = {}, out = ["보고", "회의", "정산", "계획", "기록"];
     state.tasks.forEach(function (t) { if (t.category) out.push(t.category); });
@@ -858,6 +1092,22 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
       case "month-next": monthCursor = new Date(monthCursor.getFullYear(), monthCursor.getMonth() + 1, 1); render(); break;
       case "month-now": monthCursor = new Date(today().getFullYear(), today().getMonth(), 1); selDay = keyOf(today()); render(); break;
       case "pick": selDay = k; render(); break;
+      case "ai-run": aiRun(); break;
+      case "ai-cancel":
+        ai.busy = false;
+        if (ai.stream) { try { ai.stream.abort(); } catch (err) {} ai.stream = null; }
+        ai.error = ""; render(); toast("취소했어요");
+        break;
+      case "ai-discard": ai.result = null; ai.usage = null; ai.error = ""; render(); break;
+      case "ai-add": {
+        var picked = ai.result.filter(function (r) { return r.on; }).map(function (r) { return r.task; });
+        if (!picked.length) { document.getElementById("ai-msg").textContent = "추가할 업무를 하나 이상 고르세요."; break; }
+        state.tasks = state.tasks.concat(picked);
+        ai.result = null; ai.usage = null; ai.error = "";
+        save(); render(); toast("업무 " + picked.length + "개를 추가했어요");
+        break;
+      }
+      case "key-clear": setKey(""); ai.error = ""; render(); toast("API 키를 지웠어요"); break;
       case "del-hol":
         state.holidays = state.holidays.filter(function (h) { return h.date !== k; });
         indexHolidays(); save(); render(); toast("휴무일을 지웠어요");
@@ -916,12 +1166,18 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
   });
   document.addEventListener("change", function (e) {
     if (e.target.name === "flt") { filter = e.target.value; render(); }
+    if (e.target.classList.contains("ai-pick") && ai.result) ai.result[Number(e.target.dataset.i)].on = e.target.checked;
     if (e.target.name === "f-cad") document.getElementById("f-hrule").value = e.target.value === "daily" ? "skip" : "before";
     if (e.target.name === "f-cad" || e.target.id === "f-rule") syncForm();
   });
   document.addEventListener("submit", function (e) {
     e.preventDefault();
     if (e.target.id === "task-form") submitForm();
+    if (e.target.id === "key-form") {
+      var kv = document.getElementById("ai-key").value.trim();
+      if (!/^sk-ant-/.test(kv)) { document.getElementById("ai-msg").textContent = "sk-ant- 로 시작하는 Anthropic API 키를 넣어 주세요."; return; }
+      setKey(kv); ai.error = ""; render(); toast("API 키를 저장했어요");
+    }
     if (e.target.id === "hol-form") {
       var hd = document.getElementById("h-date").value, hname = document.getElementById("h-name").value.trim();
       if (!hd || !hname) { document.getElementById("hol-msg").textContent = "날짜와 이름을 모두 입력하세요."; return; }
