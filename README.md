@@ -36,8 +36,11 @@ GitHub Pages로 공개하면 `https://<아이디>.github.io/<저장소>/` 주소
 
 `main` 또는 작업 브랜치에 푸시하면 GitHub Actions(`.github/workflows/android.yml`)가 APK를 만듭니다.
 
-1. 저장소 **Actions → Android APK → 최근 실행** 에서 `work-rhythm-apk` 내려받기
-2. 압축을 풀어 `work-rhythm.apk`를 휴대폰으로 옮겨 설치 ("출처를 알 수 없는 앱" 허용 필요)
+휴대폰에서 아래 주소를 열면 최신 APK가 바로 내려받아집니다 (로그인 불필요).
+
+https://github.com/NoWorkPlz/AIPractice/releases/latest/download/work-rhythm.apk
+
+설치할 때 "출처를 알 수 없는 앱" 허용이 필요합니다. 빌드 기록은 저장소의 **Releases**에서 볼 수 있어요.
 
 직접 빌드하려면 Node 20+, JDK 21, Android SDK가 필요합니다.
 

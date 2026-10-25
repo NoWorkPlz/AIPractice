@@ -6,6 +6,9 @@ on:
     paths-ignore: ["README.md"]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -55,3 +58,17 @@ jobs:
           name: work-rhythm-apk
           path: work-rhythm.apk
           retention-days: 30
+
+      # 휴대폰에서 로그인 없이 받을 수 있게 릴리스에 올림
+      # 항상 최신: https://github.com/<owner>/<repo>/releases/latest/download/work-rhythm.apk
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_number }}
+          name: 업무 리듬 안드로이드 앱 (빌드 ${{ github.run_number }})
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          files: work-rhythm.apk
+          body: |
+            휴대폰에서 work-rhythm.apk를 눌러 내려받고 설치하세요. 설치할 때 "출처를 알 수 없는 앱" 허용이 필요해요.
+            이미 설치했다면 덮어서 설치해도 데이터는 그대로 남아요.
