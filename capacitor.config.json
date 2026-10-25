@@ -1,0 +1,8 @@
+{
+  "appId": "com.workrhythm.app",
+  "appName": "업무 리듬",
+  "webDir": "www",
+  "android": {
+    "adjustMarginsForEdgeToEdge": "force"
+  }
+}

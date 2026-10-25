@@ -1,0 +1,17 @@
+{
+  "name": "work-rhythm",
+  "version": "1.1.0",
+  "private": true,
+  "description": "업무 리듬: 반복 업무 정리 앱 (웹 · PWA · 안드로이드)",
+  "scripts": {
+    "build": "node scripts/build-web.mjs",
+    "android": "npm run build && npx cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "7.6.9",
+    "@capacitor/core": "7.6.9"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "7.6.9"
+  }
+}

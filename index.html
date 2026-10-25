@@ -3,8 +3,14 @@
 <head><!--shell-->
 <meta charset="utf-8"><!--shell-->
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><!--shell-->
-</head><!--shell-->
-<body><!--shell-->
+<link rel="manifest" href="manifest.webmanifest"><!--pwa-->
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)"><!--pwa-->
+<meta name="theme-color" content="#192019" media="(prefers-color-scheme: dark)"><!--pwa-->
+<link rel="icon" href="icons/icon-192.png"><!--pwa-->
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png"><!--pwa-->
+<meta name="mobile-web-app-capable" content="yes"><!--pwa-->
+<meta name="apple-mobile-web-app-capable" content="yes"><!--pwa-->
+<meta name="apple-mobile-web-app-title" content="업무 리듬"><!--pwa-->
 <title>업무 리듬</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -192,6 +198,14 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
   .cell .it, .cell .more { display: none; }
   .cell .dots { display: flex; }
 }
+.hol { color: var(--warn); }
+.cell.hol .d b { color: var(--warn); }
+.cell.today.hol .d b { color: var(--accent-ink); }
+.cell .hol-name { font-size: 11px; color: var(--warn); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hol-name { font-size: 12px; color: var(--warn); margin: 0 0 4px; }
+.steps { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.steps b:first-child { margin-right: 6px; }
+@media (max-width: 640px) { .cell .hol-name { font-size: 10px; } }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; margin-top: 10px; }
 
 /* 업무 관리 */
@@ -209,6 +223,8 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
 .toast { position: fixed; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 8px 16px; border-radius: 8px; font-size: 14px; z-index: 20; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
+</head><!--shell-->
+<body><!--shell-->
 
 <header class="top gutter">
   <div class="inner">
@@ -260,11 +276,38 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
     return Math.ceil(((t - y0) / 864e5 + 1) / 7);
   }
   function fmt(d) { return (d.getMonth() + 1) + "/" + d.getDate() + " (" + DOW[d.getDay()] + ")"; }
+
+  /* ---------- 공휴일 ---------- */
+  // 관공서 공휴일 + 대체공휴일 + 선거일·임시공휴일. 2026년부터 노동절·제헌절 포함
+  var HOLIDAY_YEARS = [2025, 2026, 2027];
+  var HOLIDAYS = {};
+  [
+    "2025-01-01 신정|2025-01-27 임시공휴일|2025-01-28 설날 연휴|2025-01-29 설날|2025-01-30 설날 연휴|2025-03-01 삼일절|2025-03-03 대체공휴일(삼일절)" +
+    "|2025-05-05 어린이날·부처님오신날|2025-05-06 대체공휴일|2025-06-03 대통령선거일|2025-06-06 현충일|2025-08-15 광복절|2025-10-03 개천절" +
+    "|2025-10-05 추석 연휴|2025-10-06 추석|2025-10-07 추석 연휴|2025-10-08 대체공휴일(추석)|2025-10-09 한글날|2025-12-25 성탄절",
+    "2026-01-01 신정|2026-02-16 설날 연휴|2026-02-17 설날|2026-02-18 설날 연휴|2026-03-01 삼일절|2026-03-02 대체공휴일(삼일절)|2026-05-01 노동절" +
+    "|2026-05-05 어린이날|2026-05-24 부처님오신날|2026-05-25 대체공휴일(부처님오신날)|2026-06-03 지방선거일|2026-06-06 현충일|2026-07-17 제헌절" +
+    "|2026-08-15 광복절|2026-08-17 대체공휴일(광복절)|2026-09-24 추석 연휴|2026-09-25 추석|2026-09-26 추석 연휴|2026-10-03 개천절" +
+    "|2026-10-05 대체공휴일(개천절)|2026-10-09 한글날|2026-12-25 성탄절",
+    "2027-01-01 신정|2027-02-06 설날 연휴|2027-02-07 설날|2027-02-08 설날 연휴|2027-02-09 대체공휴일(설날)|2027-03-01 삼일절|2027-05-01 노동절" +
+    "|2027-05-05 어린이날|2027-05-13 부처님오신날|2027-06-06 현충일|2027-07-17 제헌절|2027-08-15 광복절|2027-08-16 대체공휴일(광복절)" +
+    "|2027-09-14 추석 연휴|2027-09-15 추석|2027-09-16 추석 연휴|2027-10-03 개천절|2027-10-04 대체공휴일(개천절)|2027-10-09 한글날" +
+    "|2027-10-11 대체공휴일(한글날)|2027-12-25 성탄절|2027-12-27 대체공휴일(성탄절)"
+  ].join("|").split("|").forEach(function (s) { HOLIDAYS[s.slice(0, 10)] = s.slice(11); });
+  var customHol = {};
+  function indexHolidays() {
+    customHol = {};
+    (state.holidays || []).forEach(function (h) { customHol[h.date] = h.name; });
+  }
+  function holidayName(d) { var k = keyOf(d); return customHol[k] || HOLIDAYS[k] || ""; }
+  function isOff(d) { return isWeekend(d) || !!holidayName(d); }
+  function hasHolidayData(y) { return HOLIDAY_YEARS.indexOf(y) !== -1; }
+
   function bizDays(y, m) {
     var total = 0, upto = 0, t = today();
     for (var i = 1; i <= daysInMonth(y, m); i++) {
       var d = new Date(y, m, i);
-      if (!isWeekend(d)) { total++; if (d <= t) upto++; }
+      if (!isOff(d)) { total++; if (d <= t) upto++; }
     }
     return { total: total, upto: upto };
   }
@@ -279,7 +322,7 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
   function uid() { return Math.random().toString(36).slice(2, 10); }
   function baseTask(o) {
     var t = { id: uid(), title: "", cadence: "once", weekdays: [], anchor: "", monthRule: "day", monthDay: 1,
-      shiftWeekend: false, quarterMonth: 0, date: "", category: "", priority: "mid", note: "", active: true, start: keyOf(today()) };
+      shiftWeekend: false, holidayRule: "", quarterMonth: 0, date: "", category: "", priority: "mid", note: "", active: true, start: keyOf(today()) };
     for (var k in o) t[k] = o[k];
     return t;
   }
@@ -287,16 +330,39 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
   /* ---------- 반복 규칙 ---------- */
   function monthTarget(t, y, m) {
     var n = daysInMonth(y, m), d;
-    if (t.monthRule === "firstBiz") { d = 1; while (isWeekend(new Date(y, m, d))) d++; return d; }
-    if (t.monthRule === "lastBiz") { d = n; while (isWeekend(new Date(y, m, d))) d--; return d; }
+    if (t.monthRule === "firstBiz") { d = 1; while (d < n && isOff(new Date(y, m, d))) d++; return d; }
+    if (t.monthRule === "lastBiz") { d = n; while (d > 1 && isOff(new Date(y, m, d))) d--; return d; }
     d = t.monthRule === "last" ? n : Math.min(Number(t.monthDay) || 1, n);
     if (t.shiftWeekend) {
       var s = d;
-      while (s >= 1 && isWeekend(new Date(y, m, s))) s--;
-      if (s < 1) { s = d; while (isWeekend(new Date(y, m, s))) s++; }
+      while (s >= 1 && isOff(new Date(y, m, s))) s--;
+      if (s < 1) { s = d; while (s < n && isOff(new Date(y, m, s))) s++; }
       d = s;
     }
     return d;
+  }
+  function holidayRule(t) { return t.holidayRule || (t.cadence === "daily" ? "skip" : "before"); }
+  function baseOccurs(t, date) {
+    if (t.cadence === "biweekly") {
+      var a = parse(t.anchor);
+      if (date.getDay() !== a.getDay()) return false;
+      var w = Math.round(diffDays(a, date) / 7);
+      return ((w % 2) + 2) % 2 === 0;
+    }
+    return t.weekdays.indexOf(date.getDay()) !== -1;
+  }
+  // 일간·주간·격주: 공휴일이면 건너뛰기 / 직전 영업일로 당기기 / 그대로
+  function weeklyOccurs(t, date) {
+    var rule = holidayRule(t);
+    if (rule === "keep") return baseOccurs(t, date);
+    if (baseOccurs(t, date) && !holidayName(date)) return true;
+    if (rule !== "before" || isOff(date)) return false;
+    for (var i = 1; i <= 10; i++) {
+      var e = addDays(date, i);
+      if (!isOff(e)) return false;
+      if (holidayName(e) && baseOccurs(t, e)) return true;
+    }
+    return false;
   }
   function occursOn(t, date) {
     if (!t.active) return false;
@@ -306,13 +372,8 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
     switch (t.cadence) {
       case "daily":
       case "weekly":
-        return t.weekdays.indexOf(date.getDay()) !== -1;
-      case "biweekly": {
-        var a = parse(t.anchor);
-        if (date.getDay() !== a.getDay()) return false;
-        var w = Math.round(diffDays(a, date) / 7);
-        return ((w % 2) + 2) % 2 === 0;
-      }
+      case "biweekly":
+        return weeklyOccurs(t, date);
       case "monthly":
         return date.getDate() === monthTarget(t, date.getFullYear(), date.getMonth());
       case "quarterly":
@@ -337,11 +398,17 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
     else if (t.monthRule === "lastBiz") s = "마지막 영업일";
     else if (t.monthRule === "last") s = "말일";
     else s = t.monthDay + "일";
-    if (t.shiftWeekend && (t.monthRule === "day" || t.monthRule === "last")) s += " · 주말이면 금요일로 당김";
+    if (t.shiftWeekend && (t.monthRule === "day" || t.monthRule === "last")) s += " · 쉬는 날이면 직전 영업일로";
     return s;
   }
+  var HRULE_LABEL = { skip: "공휴일이면 건너뜀", before: "공휴일이면 직전 영업일로", keep: "공휴일에도 진행" };
   function quarterMonths(q) { return [1, 4, 7, 10].map(function (x) { return x + Number(q); }).join("·"); }
   function describe(t) {
+    var s = describeBase(t);
+    if (t.cadence === "daily" || t.cadence === "weekly" || t.cadence === "biweekly") s += " · " + HRULE_LABEL[holidayRule(t)];
+    return s;
+  }
+  function describeBase(t) {
     var days = t.weekdays.slice().sort(function (a, b) { return ((a + 6) % 7) - ((b + 6) % 7); }).map(function (d) { return DOW[d]; });
     switch (t.cadence) {
       case "daily":
@@ -388,7 +455,7 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
     var ms = keyOf(new Date(t0.getFullYear(), t0.getMonth(), 1));
     var ws = weekStart(t0);
     var weekdays = [1, 2, 3, 4, 5];
-    var s = { tasks: [], done: {}, notes: {} };
+    var s = { tasks: [], done: {}, notes: {}, holidays: [] };
     function add(o) { o.start = ms; o.sample = true; var t = baseTask(o); s.tasks.push(t); return t; }
     add({ title: "메일·메신저 확인 및 회신", cadence: "daily", weekdays: weekdays, priority: "high", category: "커뮤니케이션", note: "출근 직후 30분, 점심 후 한 번 더" });
     var log = add({ title: "업무 일지 작성", cadence: "daily", weekdays: weekdays, category: "기록", note: "오늘 한 일 · 내일 할 일 3줄" });
@@ -445,7 +512,8 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
 
   function renderHeader() {
     var t0 = today(), tk = keyOf(t0);
-    document.getElementById("hdr-eyebrow").textContent = "업무 리듬 · " + t0.getFullYear() + "년 " + isoWeek(t0) + "주차";
+    var hn = holidayName(t0);
+    document.getElementById("hdr-eyebrow").textContent = "업무 리듬 · " + t0.getFullYear() + "년 " + isoWeek(t0) + "주차" + (hn ? " · 오늘은 " + hn : "");
     document.getElementById("hdr-date").textContent = (t0.getMonth() + 1) + "월 " + t0.getDate() + "일 " + DOW[t0.getDay()] + "요일";
     var list = dayTasks(t0), done = list.filter(function (t) { return doneState(t.id, tk); }).length;
     var od = overdueList().length;
@@ -484,7 +552,7 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
     }
     html += '<section class="panel"><div class="sec-head"><h2>오늘 할 일</h2><small class="num">' + done + " / " + list.length + " 완료</small></div>" +
       '<div class="progress" role="progressbar" aria-valuenow="' + pct + '" aria-valuemin="0" aria-valuemax="100"><i style="width:' + pct + '%"></i></div>';
-    if (!list.length) html += '<p class="empty">오늘 예정된 업무가 없어요. 아래에서 바로 추가하거나 업무 관리에서 반복 업무를 등록하세요.</p>';
+    if (!list.length) html += '<p class="empty">' + (isOff(t0) ? "오늘은 쉬는 날이라 예정된 업무가 없어요." : "오늘 예정된 업무가 없어요. 아래에서 바로 추가하거나 업무 관리에서 반복 업무를 등록하세요.") + "</p>";
     var groups = {};
     list.forEach(function (t) { (groups[t.cadence] = groups[t.cadence] || []).push(t); });
     Object.keys(CAD).forEach(function (c) {
@@ -507,6 +575,11 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
         (o.t.priority === "high" ? '<span class="pri">중요</span>' : "") + "</span></div></li>";
     }).join("") + "</ul>" : '<p class="empty">2주 안에 예정된 주간·월간 업무가 없어요.</p>';
     html += "</section>";
+    var hols = upcomingHolidays(t0, 90, 5);
+    html += '<section class="panel"><div class="sec-head"><h2>다가오는 휴일</h2><small>앞으로 90일</small></div>' +
+      (hols.length ? '<ul class="tasks">' + hols.map(function (h) {
+        return '<li class="task"><span class="num" style="flex:none;min-width:44px;font-size:12px;color:var(--muted)">D-' + h.dd + '</span><div class="t-body"><span class="t-title">' + esc(h.name) + '</span><span class="t-meta"><span class="t-date">' + fmt(h.d) + "</span>" + (h.custom ? "<span>회사 휴무</span>" : "") + "</span></div></li>";
+      }).join("") + "</ul>" : '<p class="empty">90일 안에 등록된 휴일이 없어요.</p>') + "</section>";
     html += '<section class="panel"><div class="sec-head"><h2>오늘의 업무 메모</h2><small id="note-saved">자동 저장</small></div>' +
       '<textarea id="day-note" placeholder="회의 내용, 전달받은 요청, 내일로 넘길 일 등을 적어 두세요.">' + esc(state.notes[tk] || "") + "</textarea>";
     var prevNotes = Object.keys(state.notes).filter(function (k) { return k < tk && state.notes[k].trim(); }).sort().reverse().slice(0, 3);
@@ -532,8 +605,10 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
     for (var i = 0; i < 7; i++) {
       var d = addDays(s, i), k = keyOf(d), list = dayTasks(d);
       var dn = list.filter(function (t) { return doneState(t.id, k); }).length;
-      html += '<div class="day-col' + (k === tk ? " is-today" : "") + (isWeekend(d) ? " is-weekend" : "") + (list.length ? "" : " is-empty") + '">' +
-        '<div class="day-head"><b>' + DOW[d.getDay()] + " " + (d.getMonth() + 1) + "/" + d.getDate() + '</b><span class="num">' + (list.length ? dn + "/" + list.length : "") + "</span></div>" +
+      var hn = holidayName(d);
+      html += '<div class="day-col' + (k === tk ? " is-today" : "") + (isOff(d) ? " is-weekend" : "") + (list.length ? "" : " is-empty") + '">' +
+        '<div class="day-head"><b' + (hn ? ' class="hol"' : "") + ">" + DOW[d.getDay()] + " " + (d.getMonth() + 1) + "/" + d.getDate() + '</b><span class="num">' + (list.length ? dn + "/" + list.length : "") + "</span></div>" +
+        (hn ? '<p class="hol-name">' + esc(hn) + "</p>" : "") +
         (list.length ? '<ul class="tasks">' + list.map(function (t) { return taskRow(t, k, { compact: true }); }).join("") + "</ul>" : '<p class="empty" style="font-size:12px">없음</p>') +
         "</div>";
     }
@@ -559,16 +634,20 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
       // 매일 반복 업무는 칸을 가득 채우므로 달력 칸에서는 제외하고 개수만 반영
       var shown = list.filter(function (t) { return t.cadence !== "daily"; });
       var dn = list.filter(function (t) { return doneState(t.id, k); }).length;
-      html += '<button type="button" class="cell' + (d.getMonth() !== m ? " out" : "") + (k === tk ? " today" : "") + (k === selDay ? " sel" : "") + '" data-act="pick" data-k="' + k + '" aria-label="' + (d.getMonth() + 1) + "월 " + d.getDate() + "일, 업무 " + list.length + '건">' +
+      var hn = holidayName(d);
+      html += '<button type="button" class="cell' + (d.getMonth() !== m ? " out" : "") + (k === tk ? " today" : "") + (k === selDay ? " sel" : "") + (hn || d.getDay() === 0 ? " hol" : "") + '" data-act="pick" data-k="' + k + '" aria-label="' + (d.getMonth() + 1) + "월 " + d.getDate() + "일" + (hn ? " " + esc(hn) : "") + ", 업무 " + list.length + '건">' +
         '<span class="d"><b>' + d.getDate() + "</b>" + (list.length ? '<em class="' + (dn === list.length ? "all" : "") + '">' + dn + "/" + list.length + "</em>" : "") + "</span>" +
+        (hn ? '<span class="hol-name">' + esc(hn) + "</span>" : "") +
         shown.slice(0, 3).map(function (t) { return '<span class="it cad-' + t.cadence + (doneState(t.id, k) ? " done" : "") + '"><span style="color:var(--ink)">' + esc(t.title) + "</span></span>"; }).join("") +
         (shown.length > 3 ? '<span class="more">+' + (shown.length - 3) + "건</span>" : "") +
         '<span class="dots">' + shown.map(function (t) { return '<i class="cad-' + t.cadence + '"></i>'; }).join("") + "</span></button>";
     }
     html += "</div></div>";
+    if (!hasHolidayData(y)) html += '<p class="hint" style="margin:10px 0 0">' + y + "년 공휴일은 아직 들어 있지 않아요. 업무 관리 → 휴일 관리에서 직접 추가할 수 있어요.</p>";
     html += '<div class="legend">' + Object.keys(CAD).map(function (c) { return '<span class="cad cad-' + c + '">' + CAD[c] + "</span>"; }).join("") + '<span class="hint">· 일간 업무는 칸에 개수로만 표시</span></div>';
     var sd = parse(selDay), sl = dayTasks(sd);
-    html += '<section class="panel" style="margin-top:18px"><div class="sec-head"><h2>' + (sd.getMonth() + 1) + "월 " + sd.getDate() + "일 " + DOW[sd.getDay()] + "요일</h2><small>" + sl.length + "건</small></div>" +
+    var shn = holidayName(sd);
+    html += '<section class="panel" style="margin-top:18px"><div class="sec-head"><h2>' + (sd.getMonth() + 1) + "월 " + sd.getDate() + "일 " + DOW[sd.getDay()] + "요일" + (shn ? ' <span class="hol">· ' + esc(shn) + "</span>" : "") + "</h2><small>" + sl.length + "건</small></div>" +
       (sl.length ? '<ul class="tasks">' + sl.map(function (t) { return taskRow(t, selDay); }).join("") + "</ul>" : '<p class="empty">이 날은 예정된 업무가 없어요.</p>') + "</section>";
     return sampleBanner() + html;
   }
@@ -596,6 +675,7 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
         '<button class="ghost sm danger" type="button" data-act="del" data-id="' + t.id + '">삭제</button></div></div>';
     });
     html += "</section>";
+    html += holidayPanel() + installPanel();
     html += '<section class="panel"><div class="sec-head"><h2>백업 · 옮기기</h2></div>' +
       '<p class="hint" style="margin:0 0 10px">데이터는 이 브라우저에만 저장돼요. 다른 PC로 옮기거나 백업하려면 내보내기한 내용을 복사해 두었다가 가져오기에 붙여 넣으세요.</p>' +
       '<textarea id="backup-text" placeholder="여기에 백업 내용이 표시되거나, 가져올 내용을 붙여 넣어요." style="min-height:80px;font-family:var(--font-mono);font-size:12px"></textarea>' +
@@ -612,12 +692,14 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
       '<div class="field full" data-show="daily weekly"><span class="lbl">요일</span><div class="seg">' +
       [1, 2, 3, 4, 5, 6, 0].map(function (d) { return '<label><input type="checkbox" name="f-wd" id="f-wd-' + d + '" value="' + d + '"><span>' + DOW[d] + "</span></label>"; }).join("") + "</div></div>" +
       '<div class="field full" data-show="biweekly"><label for="f-anchor">기준일 (첫 번째로 하는 날)</label><input type="date" id="f-anchor"><span class="hint">이 날짜의 요일에 2주마다 반복해요.</span></div>' +
+      '<div class="field full" data-show="daily weekly biweekly"><label for="f-hrule">공휴일 처리</label><select id="f-hrule">' +
+      '<option value="skip">공휴일이면 건너뛰기</option><option value="before">공휴일이면 직전 영업일로 당기기</option><option value="keep">공휴일에도 그대로 하기</option></select></div>' +
       '<div class="field" data-show="quarterly"><label for="f-quarter">분기 중 몇째 달</label><select id="f-quarter">' +
       QUARTER_LABEL.map(function (l, i) { return '<option value="' + i + '">' + l + " (" + quarterMonths(i) + "월)</option>"; }).join("") + "</select></div>" +
       '<div class="field" data-show="monthly quarterly"><label for="f-rule">날짜 기준</label><select id="f-rule">' +
       '<option value="day">특정 일자</option><option value="last">말일</option><option value="firstBiz">첫 영업일</option><option value="lastBiz">마지막 영업일</option></select></div>' +
       '<div class="field" data-show="monthly quarterly" data-rule="day"><label for="f-day">일자</label><input type="number" id="f-day" min="1" max="31" value="25"><span class="hint">31을 넣으면 짧은 달은 말일로 처리해요.</span></div>' +
-      '<div class="field full" data-show="monthly quarterly" data-rule="day last"><label class="check-line"><input type="checkbox" id="f-shift" checked> 주말이면 직전 금요일로 당기기</label></div>' +
+      '<div class="field full" data-show="monthly quarterly" data-rule="day last"><label class="check-line"><input type="checkbox" id="f-shift" checked> 주말·공휴일이면 직전 영업일로 당기기</label></div>' +
       '<div class="field full" data-show="once"><label for="f-date">날짜</label><input type="date" id="f-date"></div>' +
       '<div class="field"><label for="f-cat">분류</label><input type="text" id="f-cat" list="cat-list" placeholder="예: 보고, 회의, 정산" maxlength="20"><datalist id="cat-list">' +
       uniqueCats().map(function (c) { return '<option value="' + esc(c) + '"></option>'; }).join("") + "</datalist></div>" +
@@ -626,6 +708,45 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
       '<div class="field full"><p class="msg" id="form-msg"></p><div class="row"><button class="btn" type="submit">' + (editingId ? "수정 저장" : "업무 등록") + "</button></div></div>" +
       "</form></section></div>";
     return html;
+  }
+  function holidayPanel() {
+    var t0 = today(), tk = keyOf(t0);
+    var custom = state.holidays.slice().sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+    var html = '<section class="panel"><div class="sec-head"><h2>휴일 관리</h2><small>공휴일 ' + HOLIDAY_YEARS[0] + "–" + HOLIDAY_YEARS[HOLIDAY_YEARS.length - 1] + "년 내장</small></div>" +
+      '<p class="hint" style="margin:0 0 10px">공휴일과 여기 등록한 회사 휴무일은 쉬는 날로 계산해요. 첫·마지막 영업일, 직전 영업일로 당기기, 영업일 수에 모두 반영돼요.</p>' +
+      '<form id="hol-form" class="row"><input type="date" id="h-date" aria-label="휴무일 날짜" style="flex:1 1 140px;width:auto">' +
+      '<input type="text" id="h-name" placeholder="예: 창립기념일" maxlength="20" aria-label="휴무일 이름" style="flex:2 1 160px;width:auto">' +
+      '<button class="btn" type="submit">휴무일 추가</button></form><p class="msg" id="hol-msg"></p>';
+    if (custom.length) {
+      html += '<p class="group-label" style="margin-top:4px">회사 휴무일</p><ul class="tasks">' + custom.map(function (h) {
+        return '<li class="task"><div class="t-body"><span class="t-title">' + esc(h.name) + '</span><span class="t-meta"><span class="t-date">' + h.date.slice(0, 4) + " · " + fmt(parse(h.date)) + "</span>" + (h.date < tk ? "<span>지남</span>" : "") + "</span></div>" +
+          '<div class="t-actions"><button class="ghost sm danger" type="button" data-act="del-hol" data-k="' + h.date + '">삭제</button></div></li>';
+      }).join("") + "</ul>";
+    }
+    var next = upcomingHolidays(addDays(t0, -1), 400, 8).filter(function (h) { return !h.custom; });
+    html += '<p class="group-label" style="margin-top:14px">다가오는 공휴일</p><ul class="tasks">' + next.map(function (h) {
+      return '<li class="task"><div class="t-body"><span class="t-title">' + esc(h.name) + '</span><span class="t-meta"><span class="t-date">' + h.d.getFullYear() + " · " + fmt(h.d) + "</span></span></div></li>";
+    }).join("") + "</ul>";
+    return html + "</section>";
+  }
+  function isStandalone() {
+    try { return !!(window.Capacitor || navigator.standalone || window.matchMedia("(display-mode: standalone)").matches); } catch (e) { return false; }
+  }
+  function installPanel() {
+    var html = '<section class="panel"><div class="sec-head"><h2>스마트폰 앱으로 쓰기</h2></div>';
+    if (isStandalone()) return html + '<p class="empty">지금 앱으로 실행 중이에요. 인터넷이 없어도 열리고, 데이터는 이 기기에 저장돼요.</p></section>';
+    return html + (installEvt ? '<p style="margin:0 0 10px"><button class="btn" type="button" data-act="install">홈 화면에 앱 설치</button></p>' : "") +
+      '<ul class="steps"><li><b>안드로이드</b> 크롬이나 삼성 인터넷에서 이 페이지를 열고 메뉴 → <b>홈 화면에 추가</b> 또는 <b>앱 설치</b></li>' +
+      '<li><b>아이폰</b> 사파리에서 열고 공유 버튼 → <b>홈 화면에 추가</b></li></ul>' +
+      '<p class="hint" style="margin:8px 0 0">설치는 https 웹 주소로 열었을 때 돼요. 설치한 앱은 인터넷 없이도 열려요. 휴대폰과 PC는 데이터가 따로 저장되니, 옮길 때는 아래 백업을 쓰세요.</p></section>';
+  }
+  function upcomingHolidays(from, days, max) {
+    var out = [];
+    for (var i = 1; i <= days && out.length < max; i++) {
+      var d = addDays(from, i), hn = holidayName(d);
+      if (hn) out.push({ d: d, dd: i, name: hn, custom: !!customHol[keyOf(d)] });
+    }
+    return out;
   }
   function uniqueCats() {
     var seen = {}, out = ["보고", "회의", "정산", "계획", "기록"];
@@ -649,6 +770,7 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
     document.getElementById("f-cad-" + t.cadence).checked = true;
     setWeekdays(t.weekdays.length ? t.weekdays : [1, 2, 3, 4, 5]);
     document.getElementById("f-anchor").value = t.anchor || tk;
+    document.getElementById("f-hrule").value = holidayRule(t);
     document.getElementById("f-quarter").value = String(t.quarterMonth || 0);
     document.getElementById("f-rule").value = t.monthRule || "day";
     document.getElementById("f-day").value = t.monthDay || 25;
@@ -668,7 +790,8 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
       title: title, cadence: cad, weekdays: (cad === "daily" || cad === "weekly") ? wd : [],
       anchor: document.getElementById("f-anchor").value, quarterMonth: Number(document.getElementById("f-quarter").value),
       monthRule: document.getElementById("f-rule").value, monthDay: Math.min(31, Math.max(1, Number(document.getElementById("f-day").value) || 1)),
-      shiftWeekend: document.getElementById("f-shift").checked, date: document.getElementById("f-date").value,
+      shiftWeekend: document.getElementById("f-shift").checked,
+      holidayRule: (cad === "daily" || cad === "weekly" || cad === "biweekly") ? document.getElementById("f-hrule").value : "", date: document.getElementById("f-date").value,
       category: document.getElementById("f-cat").value.trim(), priority: document.getElementById("f-pri").value,
       note: document.getElementById("f-note").value.trim()
     };
@@ -707,6 +830,10 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
     render(); window.scrollTo(0, 0);
   }
 
+  var installEvt = null;
+  window.addEventListener("beforeinstallprompt", function (e) { e.preventDefault(); installEvt = e; if (view === "tasks") render(); });
+  window.addEventListener("appinstalled", function () { installEvt = null; toast("앱을 설치했어요"); if (view === "tasks") render(); });
+
   var armed = {};
   function arm(btn, key, label, fn) {
     if (armed[key]) { clearTimeout(armed[key]); armed[key] = null; fn(); return; }
@@ -731,6 +858,13 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
       case "month-next": monthCursor = new Date(monthCursor.getFullYear(), monthCursor.getMonth() + 1, 1); render(); break;
       case "month-now": monthCursor = new Date(today().getFullYear(), today().getMonth(), 1); selDay = keyOf(today()); render(); break;
       case "pick": selDay = k; render(); break;
+      case "del-hol":
+        state.holidays = state.holidays.filter(function (h) { return h.date !== k; });
+        indexHolidays(); save(); render(); toast("휴무일을 지웠어요");
+        break;
+      case "install":
+        if (installEvt) { installEvt.prompt(); installEvt.userChoice.then(function () { installEvt = null; render(); }); }
+        break;
       case "edit": editingId = id; render(); document.getElementById("f-title").focus(); break;
       case "cancel-edit": editingId = null; render(); break;
       case "pause": {
@@ -769,23 +903,31 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
         try {
           var data = JSON.parse(document.getElementById("backup-text").value);
           if (!data || !Array.isArray(data.tasks)) throw new Error();
-          state = { tasks: data.tasks.map(function (x) { return baseTask(x); }), done: data.done || {}, notes: data.notes || {} };
+          state = { tasks: data.tasks.map(function (x) { return baseTask(x); }), done: data.done || {}, notes: data.notes || {}, holidays: Array.isArray(data.holidays) ? data.holidays : [] };
+          indexHolidays();
           editingId = null; save(); render(); toast("업무 " + state.tasks.length + "개를 가져왔어요");
         } catch (err) { msg.textContent = "백업 형식이 아니에요. 내보내기로 만든 내용을 그대로 붙여 넣으세요."; }
         break;
       }
       case "reset":
-        arm(b, "reset", "모두 지울까요?", function () { state = { tasks: [], done: {}, notes: {} }; editingId = null; save(); render(); toast("모두 지웠어요"); });
+        arm(b, "reset", "모두 지울까요?", function () { state = { tasks: [], done: {}, notes: {}, holidays: [] }; indexHolidays(); editingId = null; save(); render(); toast("모두 지웠어요"); });
         break;
     }
   });
   document.addEventListener("change", function (e) {
     if (e.target.name === "flt") { filter = e.target.value; render(); }
+    if (e.target.name === "f-cad") document.getElementById("f-hrule").value = e.target.value === "daily" ? "skip" : "before";
     if (e.target.name === "f-cad" || e.target.id === "f-rule") syncForm();
   });
   document.addEventListener("submit", function (e) {
     e.preventDefault();
     if (e.target.id === "task-form") submitForm();
+    if (e.target.id === "hol-form") {
+      var hd = document.getElementById("h-date").value, hname = document.getElementById("h-name").value.trim();
+      if (!hd || !hname) { document.getElementById("hol-msg").textContent = "날짜와 이름을 모두 입력하세요."; return; }
+      state.holidays = state.holidays.filter(function (h) { return h.date !== hd; }).concat([{ date: hd, name: hname }]);
+      indexHolidays(); save(); render(); toast(fmt(parse(hd)) + " 휴무일로 등록했어요");
+    }
     if (e.target.id === "quick-form") {
       var inp = document.getElementById("quick-input"), v = inp.value.trim();
       if (!v) return;
@@ -813,11 +955,20 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
   });
 
   state = load() || seed();
+  if (!Array.isArray(state.holidays)) state.holidays = [];
+  indexHolidays();
   save();
   var start = (location.hash || "").slice(1);
   if (!start) { try { start = sessionStorage.getItem(STORE_KEY + "-view") || ""; } catch (e) {} }
   view = ["today", "week", "month", "tasks"].indexOf(start) !== -1 ? start : "today";
   render();
+
+  // 웹 주소로 열었을 때만 오프라인 캐시(서비스 워커) 등록. 안드로이드 앱(Capacitor)은 파일을 내장하므로 제외
+  try {
+    if ("serviceWorker" in navigator && location.protocol === "https:" && !window.Capacitor) {
+      navigator.serviceWorker.register("sw.js").catch(function () {});
+    }
+  } catch (e) {}
 })();
 </script>
 </body><!--shell-->
