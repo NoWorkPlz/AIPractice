@@ -1,5 +1,5 @@
 // 업무 리듬 오프라인 캐시. 앱 파일을 바꾸면 CACHE 버전을 올린다.
-const CACHE = "work-rhythm-v4";
+const CACHE = "work-rhythm-v5";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png"];
 
 self.addEventListener("install", (e) => {

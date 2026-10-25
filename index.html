@@ -207,6 +207,19 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
 .steps b:first-child { margin-right: 6px; }
 @media (max-width: 640px) { .cell .hol-name { font-size: 10px; } }
 .ai-status { margin: 0 0 4px; font-weight: 500; }
+.steps-flow { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+.steps-flow > li { counter-increment: step; display: flex; gap: 12px; padding-block: 12px; border-top: 1px solid var(--line); }
+.steps-flow > li::before { content: counter(step); flex: none; width: 24px; height: 24px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font: 600 13px/24px var(--font-mono); text-align: center; }
+.steps-flow > li > .field { flex: 1; min-width: 0; }
+.steps-flow a { color: var(--accent); }
+.sr-only { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
+.file-btn { display: inline-block; cursor: pointer; }
+.sr-only:focus-visible + .file-btn, .file-btn:has(+ .sr-only:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.file-list { margin: 4px 0 0; padding-left: 18px; font-size: 13px; overflow-wrap: anywhere; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.ai-notice { margin: 10px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--accent-soft); font-size: 14px; }
+.api-mode { margin-top: 6px; border-top: 1px solid var(--line); padding-top: 10px; }
+.api-mode summary { cursor: pointer; font-size: 13px; color: var(--muted); }
 .progress .indet { width: 35%; animation: indet 1.4s ease-in-out infinite; }
 @keyframes indet { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
 #ai-panel .task > input[type="checkbox"] { flex: none; width: 18px; height: 18px; margin: 3px 0 0; accent-color: var(--accent); }
@@ -565,6 +578,7 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
       html += '<div class="group"><p class="group-label"><span class="cad cad-' + c + '">' + CAD[c] + "</span><span>" + groups[c].length + "건</span></p><ul class=\"tasks\">" +
         groups[c].map(function (t) { return taskRow(t, tk); }).join("") + "</ul></div>";
     });
+    html += '<button class="ghost sm" type="button" data-act="goto-ai" style="margin-top:12px">매뉴얼 파일로 업무 가져오기 (Claude·ChatGPT)</button>';
     html += '<form class="quick" id="quick-form"><input type="text" id="quick-input" placeholder="오늘만 할 일 빠르게 추가 (예: 견적서 회신)" aria-label="오늘 할 일 추가"><button class="btn" type="submit">추가</button></form></section></div>';
 
     // 오른쪽: 다가오는 업무 + 메모
@@ -759,7 +773,8 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
   var AI_MODEL = "claude-opus-5-5";
   var MAX_REQUEST = 30 * 1024 * 1024; // API 요청 한도(32MB)보다 조금 작게
   var MAX_FILE = 60 * 1024 * 1024;
-  var ai = { busy: false, status: "", error: "", result: null, summary: "", usage: null, skipped: 0, stream: null };
+  var ai = { busy: false, status: "", error: "", notice: "", result: null, summary: "", usage: null, skipped: 0, stream: null,
+    files: [], prepared: [], preparing: false, handoff: false, pasteText: "" };
   function getKey() { try { return localStorage.getItem(KEY_STORE) || ""; } catch (e) { return ""; } }
   function setKey(v) { try { if (v) localStorage.setItem(KEY_STORE, v); else localStorage.removeItem(KEY_STORE); } catch (e) {} }
 
@@ -793,10 +808,28 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
     }
   };
   function aiSystemPrompt() {
-    var t0 = today();
     return [
       "당신은 한국 회사의 업무 매뉴얼에서 담당자가 해야 할 일을 찾아, 반복 업무 관리 앱에 넣을 수 있게 정리합니다.",
-      "첨부는 PDF, 페이지 사진, 또는 한글·워드·엑셀·파워포인트에서 뽑은 텍스트입니다. 엑셀 표는 탭으로 칸이 나뉘어 있습니다.",
+      "첨부는 PDF, 페이지 사진, 또는 한글·워드·엑셀·파워포인트에서 뽑은 텍스트입니다. 엑셀 표는 탭으로 칸이 나뉘어 있습니다."
+    ].concat(aiRules()).join("\n");
+  }
+  // Claude·ChatGPT 앱에 붙여 넣을 요청 문구. 답변은 JSON 코드 블록으로 받는다
+  function handoffPrompt() {
+    var example = { summary: "총무팀 업무 매뉴얼", tasks: [{ title: "월간 실적 보고서 제출", cadence: "monthly", weekdays: [], biweekly_weekday: 0,
+      month_rule: "lastBiz", month_day: 0, quarter_month: 0, date: "", holiday_rule: "before", shift_if_off: true, category: "보고",
+      priority: "high", note: "팀장 메일로 제출", source: "3쪽: 매월 마지막 영업일까지 실적 보고" }] };
+    return [
+      "[업무 리듬 앱 요청] 첨부한 업무 매뉴얼을 읽고, 내가 해야 할 업무를 반복 업무 관리 앱에 넣을 수 있게 정리해 줘.",
+      "첨부는 PDF, 사진, 문서 파일이거나 한글 문서에서 뽑은 텍스트(.txt)야. 사진이나 스캔본이면 글자를 읽어서 정리해 줘."
+    ].concat(aiRules(), [
+      "",
+      "답변은 설명 없이 아래 형식의 JSON 코드 블록 하나로만 줘. 키 이름과 영어 값(cadence, month_rule 등)은 그대로 써 줘.",
+      "```json", JSON.stringify(example), "```"
+    ]).join("\n");
+  }
+  function aiRules() {
+    var t0 = today();
+    return [
       "오늘은 " + keyOf(t0) + " (" + DOW[t0.getDay()] + "요일)입니다.",
       "",
       "뽑을 것: 사람이 실제로 해야 하는 업무(보고, 제출, 정산, 점검, 회의, 백업, 갱신, 신고 등). 배경 설명, 원칙, 조직도, 연락처는 업무가 아닙니다.",
@@ -820,12 +853,14 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
       "source: 근거 쪽수와 원문 일부(예: '3쪽: 매월 25일까지 경비 정산 완료').",
       "같은 업무가 여러 번 나오면 하나로 합칩니다. 업무가 없으면 tasks는 빈 배열입니다.",
       "summary: 어떤 매뉴얼인지 한 문장."
-    ].join("\n");
+    ];
   }
   function clampInt(v, lo, hi, dflt) { v = Math.round(Number(v)); return isFinite(v) && v >= lo && v <= hi ? v : dflt; }
   function nextWeekday(dow) { var d = today(); while (d.getDay() !== dow) d = addDays(d, 1); return d; }
   // 모델 출력 한 건을 앱의 업무 형식으로 바꾼다. 정보가 모자라면 null
+  var CAD_ALIAS = { "매일": "daily", "일간": "daily", "매주": "weekly", "주간": "weekly", "격주": "biweekly", "매월": "monthly", "월간": "monthly", "분기": "quarterly", "일회성": "once", "한번": "once" };
   function aiToTask(x) {
+    if (x && !CAD[x.cadence] && CAD_ALIAS[x.cadence]) x.cadence = CAD_ALIAS[x.cadence];
     if (!x || !CAD[x.cadence] || !String(x.title || "").trim()) return null;
     var wd = (Array.isArray(x.weekdays) ? x.weekdays : []).map(Number).filter(function (d, i, a) { return d >= 0 && d <= 6 && a.indexOf(d) === i; });
     var o = {
@@ -856,20 +891,15 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
   function isDup(t) { return state.tasks.some(function (x) { return normTitle(x.title) === normTitle(t.title); }); }
 
   function aiPanel() {
-    var key = getKey();
-    var h = '<section class="panel" id="ai-panel"><div class="sec-head"><h2>매뉴얼로 업무 가져오기</h2><small>AI 자동 정리</small></div>' +
-      '<p class="hint" style="margin:0 0 12px">업무 매뉴얼 파일(PDF·사진·한글·워드·엑셀·파워포인트)을 올리면 반복 업무와 마감일을 찾아 후보로 보여줘요. 확인하고 고른 것만 추가돼요.</p>';
-    if (!key) {
-      h += '<form id="key-form" class="field"><label for="ai-key">Anthropic API 키</label>' +
-        '<div class="row"><input type="password" id="ai-key" placeholder="sk-ant-..." autocomplete="off" spellcheck="false" style="flex:1 1 200px;width:auto"><button class="btn" type="submit">저장</button></div>' +
-        '<span class="hint">console.anthropic.com → API Keys에서 발급해요. 키는 이 기기에만 저장되고 백업 내용에는 들어가지 않아요.</span></form>';
-    } else if (ai.busy) {
+    var h = '<section class="panel" id="ai-panel"><div class="sec-head"><h2>매뉴얼로 업무 가져오기</h2><small>Claude · ChatGPT</small></div>' +
+      '<p class="hint" style="margin:0 0 6px">매뉴얼 파일을 Claude나 ChatGPT 앱으로 보내 분석하고, 답변을 붙여 넣으면 업무로 등록돼요. 지금 쓰는 구독 그대로 쓰면 되고 API 키는 필요 없어요.</p>';
+    if (ai.busy) {
       h += '<p class="ai-status" id="ai-status" role="status">' + esc(ai.status) + '</p><div class="progress"><i class="indet"></i></div>' +
         '<button class="ghost sm" type="button" data-act="ai-cancel">취소</button>';
     } else if (ai.result) {
       var n = ai.result.length;
       h += (ai.summary ? '<p style="margin:0 0 8px"><b>문서</b> ' + esc(ai.summary) + "</p>" : "") +
-        '<p class="hint" style="margin:0 0 6px">업무 ' + n + "개를 찾았어요." + (ai.skipped ? " 주기나 날짜를 알 수 없는 " + ai.skipped + "개는 뺐어요." : "") + " 이미 있는 이름과 같은 업무는 체크를 꺼 두었어요.</p>";
+        '<p class="hint" style="margin:0 0 6px">업무 ' + n + "개를 찾았어요." + (ai.skipped ? " 주기나 날짜를 알 수 없는 " + ai.skipped + "개는 뺐어요." : "") + (n ? " 이미 있는 이름과 같은 업무는 체크를 꺼 두었어요." : "") + "</p>";
       if (n) {
         h += '<ul class="tasks">' + ai.result.map(function (r, i) {
           var t = r.task;
@@ -885,14 +915,169 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
         '<button class="ghost" type="button" data-act="ai-discard">' + (n ? "버리기" : "닫기") + "</button></div>";
       if (ai.usage) h += '<p class="hint" style="margin:10px 0 0">사용량: 입력 ' + ai.usage.input.toLocaleString() + "토큰 · 출력 " + ai.usage.output.toLocaleString() + "토큰 (약 " + ai.usage.won.toLocaleString() + "원)</p>";
     } else {
-      h += '<div class="field"><label for="ai-file">매뉴얼 파일</label><input type="file" id="ai-file" accept=".pdf,.hwp,.hwpx,.docx,.xlsx,.pptx,.doc,.xls,.ppt,.txt,.md,.csv,.tsv,.json,image/*,application/pdf" multiple>' +
-        '<span class="hint">PDF(스캔본 가능), 사진, 한글(HWP·HWPX), 워드(DOCX), 엑셀(XLSX), 파워포인트(PPTX), 텍스트 파일. 여러 개를 함께 올릴 수 있고, 분량에 따라 1~3분 걸려요.</span></div>' +
-        '<div class="row" style="margin-top:12px"><button class="btn" type="button" data-act="ai-run">업무 찾기</button>' +
+      var prep = ai.preparing ? '<p class="hint" role="status">파일을 준비하는 중…</p>' :
+        ai.prepared.length ? '<ul class="file-list">' + ai.prepared.map(function (f) {
+          return "<li>" + esc(f.name) + ' <span class="hint">' + fmtSize(f.size) + (f.converted ? " · 한글 문서를 텍스트로 바꿨어요" : "") + "</span></li>";
+        }).join("") + "</ul>" : "";
+      h += '<ol class="steps-flow">' +
+        '<li><div class="field"><span class="lbl">매뉴얼 파일 고르기</span>' +
+        '<div class="row"><label class="ghost file-btn" for="ai-file">' + (ai.prepared.length ? "다른 파일 고르기" : "파일 선택") + '</label>' +
+        '<input type="file" id="ai-file" class="sr-only" accept=".pdf,.hwp,.hwpx,.docx,.xlsx,.pptx,.doc,.xls,.ppt,.txt,.md,.csv,.tsv,.json,image/*,application/pdf" multiple></div>' +
+        '<span class="hint">PDF(스캔본 가능), 사진, 한글(HWP·HWPX), 워드, 엑셀, 파워포인트, 텍스트. 여러 개를 함께 골라도 돼요.</span>' + prep + "</div></li>" +
+        '<li><div class="field"><span class="lbl">Claude나 ChatGPT로 보내기</span>' +
+        '<div class="row"><button class="btn" type="button" data-act="ai-share"' + (ai.prepared.length && !ai.preparing ? "" : " disabled") + '>AI 앱으로 보내기</button>' +
+        '<button class="ghost sm" type="button" data-act="ai-copy-prompt">요청 문구만 복사</button></div>' +
+        '<span class="hint">공유 창에서 Claude나 ChatGPT를 고르세요. 요청 문구가 복사돼 있으니 입력칸에 붙여넣고 보내면 돼요.</span>' +
+        '<span class="hint">공유 창이 안 뜨면: <a href="https://claude.ai/new" target="_blank" rel="noopener">claude.ai</a> · <a href="https://chatgpt.com/" target="_blank" rel="noopener">chatgpt.com</a>을 열고 파일을 첨부한 뒤 요청 문구를 붙여넣으세요.</span></div></li>' +
+        '<li><div class="field"><label for="ai-paste">AI 답변 붙여넣기</label>' +
+        '<span class="hint">답변에 나온 코드 블록의 복사 버튼을 누르고 이 앱으로 돌아오세요.</span>' +
+        '<textarea id="ai-paste" placeholder="여기에 AI 답변을 붙여넣으세요" style="min-height:80px;font-family:var(--font-mono);font-size:12px">' + esc(ai.pasteText) + "</textarea>" +
+        '<div class="row"><button class="ghost" type="button" data-act="ai-paste-clip">복사한 답변 붙여넣기</button><button class="btn" type="button" data-act="ai-parse">업무로 정리</button></div></div></li></ol>';
+      h += apiModeHtml();
+    }
+    h += (ai.notice ? '<p class="ai-notice" role="status">' + esc(ai.notice) + "</p>" : "") +
+      '<p class="msg" id="ai-msg">' + esc(ai.error) + "</p>" +
+      '<p class="hint" style="margin:4px 0 0">보낸 파일은 고른 AI 서비스(Claude·ChatGPT)로 전송돼요. 회사 보안 규정을 먼저 확인하세요.</p></section>';
+    return h;
+  }
+  // API 키가 있으면 앱 안에서 바로 분석 (선택 기능)
+  function apiModeHtml() {
+    var key = getKey();
+    var h = '<details class="api-mode"' + (key ? " open" : "") + '><summary>API 키로 앱 안에서 바로 분석 (선택)</summary>';
+    if (!key) {
+      h += '<form id="key-form" class="field" style="margin-top:10px"><label for="ai-key">Anthropic API 키</label>' +
+        '<div class="row"><input type="password" id="ai-key" placeholder="sk-ant-..." autocomplete="off" spellcheck="false" style="flex:1 1 200px;width:auto"><button class="btn" type="submit">저장</button></div>' +
+        '<span class="hint">console.anthropic.com에서 발급하고 쓴 만큼 요금이 나와요. 키는 이 기기에만 저장되고 백업 내용에는 들어가지 않아요.</span></form>';
+    } else {
+      h += '<div class="row" style="margin-top:10px"><button class="btn" type="button" data-act="ai-run"' + (ai.files.length && !ai.preparing ? "" : " disabled") + '>위 파일로 바로 분석</button>' +
         '<span class="hint">API 키 …' + esc(key.slice(-4)) + '</span><button class="ghost sm" type="button" data-act="key-clear">키 지우기</button></div>';
     }
-    h += '<p class="msg" id="ai-msg">' + esc(ai.error) + "</p>" +
-      '<p class="hint" style="margin:4px 0 0">올린 매뉴얼은 분석을 위해 Anthropic(Claude)으로 전송되고 API 사용료가 나와요. 회사 보안 규정을 먼저 확인하세요.</p></section>';
-    return h;
+    return h + "</details>";
+  }
+  function fmtSize(n) { return n >= 1048576 ? (n / 1048576).toFixed(1) + "MB" : Math.max(1, Math.round(n / 1024)) + "KB"; }
+
+  /* ---------- AI 앱으로 보내기 · 답변 가져오기 ---------- */
+  function isNative() { try { return !!(window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform()); } catch (e) { return false; } }
+  function capPlugin(name) {
+    var C = window.Capacitor;
+    if (!C) return null;
+    return (C.Plugins && C.Plugins[name]) || (C.registerPlugin ? C.registerPlugin(name) : null);
+  }
+  function blobToBase64(blob) {
+    return new Promise(function (resolve, reject) {
+      var fr = new FileReader();
+      fr.onload = function () { resolve(String(fr.result).split(",")[1]); };
+      fr.onerror = function () { reject(fr.error); };
+      fr.readAsDataURL(blob);
+    });
+  }
+  function base64ToBlob(b64, type) {
+    var bin = atob(b64), u8 = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return new Blob([u8], { type: type });
+  }
+  // 한글 파일은 Claude·ChatGPT가 못 읽을 수 있어 텍스트(스캔본은 그림)로 바꿔 둔다
+  async function aiPrepare(list) {
+    ai.files = list; ai.prepared = []; ai.preparing = true; ai.error = ""; ai.notice = "";
+    render();
+    var out = [];
+    try {
+      for (var i = 0; i < list.length; i++) {
+        var f = list[i], ext = (f.name.match(/\.([^.]+)$/) || [])[1];
+        ext = ext ? ext.toLowerCase() : "";
+        if (ext !== "hwp" && ext !== "hwpx") { out.push(f); continue; }
+        var reader = await import("./docread.mjs");
+        var r = await reader.readUpload(f);
+        var base = f.name.replace(/\.[^.]+$/, ""), n = 0;
+        r.blocks.forEach(function (b) {
+          var nf = b.type === "image"
+            ? new File([base64ToBlob(b.source.data, "image/jpeg")], base + "-" + (++n) + ".jpg", { type: "image/jpeg" })
+            : new File([b.source.data], base + ".txt", { type: "text/plain" });
+          nf.converted = true;
+          out.push(nf);
+        });
+      }
+    } catch (err) {
+      ai.error = err && err.userMessage ? err.userMessage : "파일을 준비하지 못했어요: " + (err && err.message || err);
+    }
+    ai.prepared = out; ai.preparing = false;
+    render();
+  }
+  function copyText(text) {
+    var clip = isNative() && capPlugin("Clipboard");
+    if (clip) return clip.write({ string: text }).catch(function () {});
+    try { return navigator.clipboard.writeText(text).catch(function () {}); } catch (e) { return Promise.resolve(); }
+  }
+  async function readClipboard() {
+    var clip = isNative() && capPlugin("Clipboard");
+    if (clip) return (await clip.read()).value || "";
+    return await navigator.clipboard.readText();
+  }
+  function safeName(name) { return name.replace(/[\\/:*?"<>|]/g, "_"); }
+  async function aiShare() {
+    var files = ai.prepared;
+    if (!files.length) { ai.error = "매뉴얼 파일을 먼저 고르세요."; render(); return; }
+    var prompt = handoffPrompt();
+    var shareNote = "Claude나 ChatGPT 입력칸에 요청 문구를 붙여넣고 보내세요. 답변이 오면 코드 블록을 복사해서 이 앱으로 돌아오면 돼요.";
+    var noShare = "이 기기에서는 바로 보내기가 안 돼요. 요청 문구를 복사해 두었으니 claude.ai나 chatgpt.com을 열고 파일을 첨부한 뒤 붙여넣어 보내세요.";
+    ai.error = "";
+    try {
+      if (isNative()) {
+        await copyText(prompt);
+        var Fs = capPlugin("Filesystem"), Share = capPlugin("Share"), uris = [];
+        for (var i = 0; i < files.length; i++) {
+          var w = await Fs.writeFile({ path: "share/" + safeName(files[i].name), data: await blobToBase64(files[i]), directory: "CACHE", recursive: true });
+          uris.push(w.uri);
+        }
+        ai.handoff = true;
+        await Share.share({ title: "업무 매뉴얼 분석", text: prompt, files: uris, dialogTitle: "Claude 또는 ChatGPT를 고르세요" });
+        ai.notice = shareNote;
+      } else if (navigator.canShare && navigator.canShare({ files: files })) {
+        copyText(prompt); // 공유 창은 사용자 동작 직후에만 열리므로 기다리지 않는다
+        ai.handoff = true;
+        await navigator.share({ title: "업무 매뉴얼 분석", text: prompt, files: files });
+        ai.notice = shareNote;
+      } else {
+        copyText(prompt);
+        ai.handoff = true;
+        ai.notice = noShare;
+      }
+    } catch (err) {
+      var msg = String(err && (err.message || err.name) || "");
+      if ((err && err.name === "AbortError") || /cancel/i.test(msg)) return; // 공유 창을 닫음
+      ai.notice = noShare;
+    }
+    render();
+  }
+  // AI 답변에서 JSON을 꺼낸다 (코드 블록 안팎 모두 허용)
+  function aiParseText(text) {
+    var m = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);
+    var body = (m ? m[1] : text).replace(/[“”]/g, '"');
+    var a = body.indexOf("{"), b = body.indexOf("[");
+    var startAt = a < 0 ? b : b < 0 ? a : Math.min(a, b);
+    var endAt = Math.max(body.lastIndexOf("}"), body.lastIndexOf("]"));
+    if (startAt < 0 || endAt < startAt) throw new SyntaxError("no json");
+    var out = JSON.parse(body.slice(startAt, endAt + 1));
+    if (Array.isArray(out)) out = { tasks: out };
+    if (!out || !Array.isArray(out.tasks)) throw new SyntaxError("no tasks");
+    return out;
+  }
+  function aiShowResult(out, usage) {
+    var tasks = out.tasks.map(aiToTask);
+    var ok = tasks.filter(Boolean);
+    ai.skipped = tasks.length - ok.length;
+    ai.summary = String(out.summary || "");
+    ai.result = ok.map(function (t) { var d = isDup(t); return { task: t, dup: d, on: !d }; });
+    ai.usage = usage || null;
+    ai.busy = false; ai.error = ""; ai.notice = ""; ai.handoff = false;
+    render();
+  }
+  function aiParsePasted(text, quiet) {
+    try { aiShowResult(aiParseText(text)); return true; }
+    catch (e) {
+      if (!quiet) { ai.error = "답변에서 업무 목록을 찾지 못했어요. AI 답변의 JSON 코드 블록을 통째로 복사해서 붙여넣어 주세요."; render(); }
+      return false;
+    }
   }
   function aiSetStatus(text) {
     ai.status = text;
@@ -902,9 +1087,8 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
   function aiFail(msg) { ai.busy = false; ai.stream = null; ai.error = msg; render(); }
 
   async function aiRun() {
-    var input = document.getElementById("ai-file");
-    var files = input ? Array.prototype.slice.call(input.files) : [];
-    ai.error = "";
+    var files = ai.files;
+    ai.error = ""; ai.notice = "";
     if (!files.length) { document.getElementById("ai-msg").textContent = "매뉴얼 파일을 먼저 고르세요."; return; }
     var big = files.filter(function (f) { return f.size > MAX_FILE; })[0];
     if (big) { document.getElementById("ai-msg").textContent = big.name + ": 파일이 너무 커요(60MB까지). 나눠서 올려 주세요."; return; }
@@ -952,17 +1136,11 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
       if (msg.stop_reason === "max_tokens") return aiFail("매뉴얼이 너무 길어 결과가 잘렸어요. PDF를 나눠서 올려 주세요.");
       var text = msg.content.filter(function (b) { return b.type === "text"; }).map(function (b) { return b.text; }).join("");
       var out = JSON.parse(text);
-      var tasks = (out.tasks || []).map(aiToTask);
-      var ok = tasks.filter(Boolean);
-      ai.skipped = tasks.length - ok.length;
-      ai.summary = String(out.summary || "");
-      ai.result = ok.map(function (t) { var d = isDup(t); return { task: t, dup: d, on: !d }; });
+      if (!Array.isArray(out.tasks)) out.tasks = [];
       var u = msg.usage || {};
       var inTok = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
       var usd = inTok * 4 / 1e6 + (u.output_tokens || 0) * 20 / 1e6;
-      ai.usage = { input: inTok, output: u.output_tokens || 0, won: Math.max(1, Math.round(usd * 1400)) };
-      ai.busy = false;
-      render();
+      aiShowResult(out, { input: inTok, output: u.output_tokens || 0, won: Math.max(1, Math.round(usd * 1400)) });
     } catch (err) {
       if (!ai.busy) return; // 취소함
       aiFail(err && err.userMessage ? err.userMessage : aiErrorText(err, Anthropic));
@@ -1093,17 +1271,45 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
       case "month-now": monthCursor = new Date(today().getFullYear(), today().getMonth(), 1); selDay = keyOf(today()); render(); break;
       case "pick": selDay = k; render(); break;
       case "ai-run": aiRun(); break;
+      case "ai-share": aiShare(); break;
+      case "goto-ai":
+        go("tasks");
+        var ap = document.getElementById("ai-panel"); if (ap) ap.scrollIntoView({ block: "start" });
+        break;
+      case "ai-copy-prompt":
+        copyText(handoffPrompt()); ai.handoff = true;
+        toast("요청 문구를 복사했어요");
+        break;
+      case "ai-paste-clip":
+        readClipboard().then(function (t) {
+          ai.pasteText = t || "";
+          var ta = document.getElementById("ai-paste");
+          if (ta) ta.value = ai.pasteText;
+          if (ai.pasteText.trim()) aiParsePasted(ai.pasteText);
+          else { ai.error = "복사한 내용이 없어요. AI 답변의 코드 블록을 복사해 오세요."; render(); }
+        }, function () {
+          ai.error = "붙여넣기 권한이 없어요. 입력칸을 길게 눌러 붙여넣은 뒤 '업무로 정리'를 누르세요."; render();
+        });
+        break;
+      case "ai-parse": {
+        var pt = document.getElementById("ai-paste");
+        ai.pasteText = pt ? pt.value : ai.pasteText;
+        if (!ai.pasteText.trim()) { ai.error = "AI 답변을 먼저 붙여넣으세요."; render(); break; }
+        aiParsePasted(ai.pasteText);
+        break;
+      }
       case "ai-cancel":
         ai.busy = false;
         if (ai.stream) { try { ai.stream.abort(); } catch (err) {} ai.stream = null; }
         ai.error = ""; render(); toast("취소했어요");
         break;
-      case "ai-discard": ai.result = null; ai.usage = null; ai.error = ""; render(); break;
+      case "ai-discard": ai.result = null; ai.usage = null; ai.error = ""; ai.pasteText = ""; render(); break;
       case "ai-add": {
         var picked = ai.result.filter(function (r) { return r.on; }).map(function (r) { return r.task; });
         if (!picked.length) { document.getElementById("ai-msg").textContent = "추가할 업무를 하나 이상 고르세요."; break; }
         state.tasks = state.tasks.concat(picked);
-        ai.result = null; ai.usage = null; ai.error = "";
+        ai.result = null; ai.usage = null; ai.error = ""; ai.pasteText = "";
+        ai.files = []; ai.prepared = [];
         save(); render(); toast("업무 " + picked.length + "개를 추가했어요");
         break;
       }
@@ -1166,6 +1372,7 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
   });
   document.addEventListener("change", function (e) {
     if (e.target.name === "flt") { filter = e.target.value; render(); }
+    if (e.target.id === "ai-file") aiPrepare(Array.prototype.slice.call(e.target.files));
     if (e.target.classList.contains("ai-pick") && ai.result) ai.result[Number(e.target.dataset.i)].on = e.target.checked;
     if (e.target.name === "f-cad") document.getElementById("f-hrule").value = e.target.value === "daily" ? "skip" : "before";
     if (e.target.name === "f-cad" || e.target.id === "f-rule") syncForm();
@@ -1195,6 +1402,7 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
   });
   var noteTimer;
   document.addEventListener("input", function (e) {
+    if (e.target.id === "ai-paste") { ai.pasteText = e.target.value; return; }
     if (e.target.id !== "day-note") return;
     var val = e.target.value, tk = keyOf(today());
     clearTimeout(noteTimer);
@@ -1206,6 +1414,13 @@ textarea { resize: vertical; min-height: 110px; line-height: 1.6; }
   });
   // 자정을 넘겨 다시 열면 날짜를 새로 계산
   var lastDay = keyOf(today());
+  // AI 앱에서 답변을 복사해 돌아오면(안드로이드 앱) 바로 읽어 온다
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState !== "visible" || !ai.handoff || ai.result || view !== "tasks" || !isNative()) return;
+    readClipboard().then(function (t) {
+      if (t && /"tasks"/.test(t) && aiParsePasted(t, true)) toast("복사한 AI 답변을 불러왔어요");
+    }, function () {});
+  });
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState === "visible" && keyOf(today()) !== lastDay) { lastDay = keyOf(today()); selDay = lastDay; render(); }
   });
